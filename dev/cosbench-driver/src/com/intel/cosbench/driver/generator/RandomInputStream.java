@@ -17,6 +17,9 @@ limitations under the License.
 
 package com.intel.cosbench.driver.generator;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.security.NoSuchAlgorithmException;
 import java.util.Random;
 
@@ -34,7 +37,7 @@ import com.intel.cosbench.log.*;
  */
 public class RandomInputStream extends NullInputStream {
 
-    private static final int SIZE = 4096; // 4 KB
+    private static final int SIZE = 1024*1024; // 1M
 
     private byte[] buffer;
 
@@ -66,10 +69,13 @@ public class RandomInputStream extends NullInputStream {
         }
         this.size = size;
 
-        buffer = new byte[SIZE];
+        // double the size
+        buffer = new byte[SIZE*2];
         if (isRandom)
-            for (int i = 0; i < SIZE; i++)
-                buffer[i] = (byte) (RandomUtils.nextInt(random, 26) + 'a');
+            for (int i = 0; i < SIZE*2; i++)
+//                buffer[i] = (byte) (RandomUtils.nextInt(random, 26) + 'a');
+        		buffer[i] = (byte) (RandomUtils.nextInt(random));
+
     }
 
     @Override
@@ -83,7 +89,8 @@ public class RandomInputStream extends NullInputStream {
         if (!hashCheck) {
             do {
                 int segment = length > SIZE ? SIZE : length;
-                System.arraycopy(buffer, 0, bytes, offset, segment);
+                int from = new Random().nextInt(SIZE);
+                System.arraycopy(buffer, from, bytes, offset, segment);
 
                 length -= segment;
                 offset += segment;
@@ -103,7 +110,8 @@ public class RandomInputStream extends NullInputStream {
             processed += length;
             do {
                 int segment = length > SIZE ? SIZE : length;
-                System.arraycopy(buffer, 0, bytes, offset, segment);
+                int from = new Random().nextInt(SIZE);
+                System.arraycopy(buffer, from, bytes, offset, segment);
                 util.update(buffer, 0, segment);
 
                 length -= segment;
@@ -128,4 +136,22 @@ public class RandomInputStream extends NullInputStream {
         }
     }
 
+	public static void main(String[] args) {
+		byte buf[] = new byte[8192000];
+		try{
+			// entity without data value
+			// entity with random input stream
+			System.out.println("=== Test Entity with value stream from random generator ===");
+	        RandomInputStream fi = new RandomInputStream(8192000, new Random(23), true, false);
+			FileOutputStream  fo = new FileOutputStream(new File("rnd.txt"));
+			fi.read(buf);
+			fo.write(buf);
+			fi.close();
+			fo.close();
+			
+		}catch(Exception e) {
+			e.printStackTrace();
+		}
+	}
+    
 }
