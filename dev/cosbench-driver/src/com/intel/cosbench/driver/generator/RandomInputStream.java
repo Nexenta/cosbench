@@ -18,16 +18,16 @@ limitations under the License.
 package com.intel.cosbench.driver.generator;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.Random;
 
 import org.apache.commons.io.input.NullInputStream;
-import org.apache.commons.lang.math.RandomUtils;
 
 import com.intel.cosbench.driver.util.HashUtil;
-import com.intel.cosbench.log.*;
+import com.intel.cosbench.log.LogFactory;
+import com.intel.cosbench.log.Logger;
 
 /**
  * This class is to generate random data as input stream for data uploading.
@@ -36,10 +36,7 @@ import com.intel.cosbench.log.*;
  * 
  */
 public class RandomInputStream extends NullInputStream {
-
-    private static final int SIZE = 1024*1024; // 1M
-
-    private byte[] buffer;
+	static int buf_size = 16384;
 
     private boolean hashCheck = false;
     private HashUtil util = null;
@@ -47,34 +44,28 @@ public class RandomInputStream extends NullInputStream {
     private byte[] hashBytes;
     private long size = 0;
     private long processed = 0;
+	private Random r;
+	private long seed;
 
     private static Logger logger = LogFactory.getSystemLogger();
 
     public RandomInputStream(long size, Random random, boolean isRandom,
             boolean hashCheck) {
         super(size);
-
+        
+        this.seed = System.currentTimeMillis() + random.nextInt(1000);
+        this.r = new Random(seed);
+        		
         this.hashCheck = hashCheck;
         try {
             this.util = new HashUtil();
         } catch (NoSuchAlgorithmException e) {
             logger.error("Alogrithm not found", e);
         }
-        this.hashLen = this.util.getHashLen();
-        if (size <= hashLen) {
-            logger.warn("The size is too small to embed checksum, will ignore integrity checking.");
-            this.hashCheck = false;
-            this.util = null;
-            this.hashLen = 0;
-        }
+        this.hashCheck = false;
+        this.util = null;
+        this.hashLen = 0;
         this.size = size;
-
-        // double the size
-        buffer = new byte[SIZE*2];
-        if (isRandom)
-            for (int i = 0; i < SIZE*2; i++)
-//                buffer[i] = (byte) (RandomUtils.nextInt(random, 26) + 'a');
-        		buffer[i] = (byte) (RandomUtils.nextInt(random));
 
     }
 
@@ -85,67 +76,79 @@ public class RandomInputStream extends NullInputStream {
 
     @Override
     protected void processBytes(byte[] bytes, int offset, int length) {
+    	long start = this.getPosition() - length;
+    	
 
-        if (!hashCheck) {
-            do {
-                int segment = length > SIZE ? SIZE : length;
-                int from = new Random().nextInt(SIZE);
-                System.arraycopy(buffer, from, bytes, offset, segment);
-
-                length -= segment;
-                offset += segment;
-            } while (length > 0); // data copy completed
-
-        } else {
-            if (length <= hashLen) {
-                System.arraycopy(hashBytes, hashLen - length, bytes, 0, length);
-
-                return;
-            }
-
-            int gap = (int) ((processed + length) - (size - hashLen));
-            if (gap > 0) // partial hash needs append in gap area.
-                length -= gap;
-
-            processed += length;
-            do {
-                int segment = length > SIZE ? SIZE : length;
-                int from = new Random().nextInt(SIZE);
-                System.arraycopy(buffer, from, bytes, offset, segment);
-                util.update(buffer, 0, segment);
-
-                length -= segment;
-                offset += segment;
-            } while (length > 0); // data copy completed
-
-            if ((gap <= hashLen) && (gap >= 0)) {
-                // append md5 hash
-                String hashString = util.calculateHash();
-
-                try {
-                    hashBytes = hashString.getBytes("UTF-8");
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    hashBytes = hashString.getBytes();
-                }
-
-                if (gap > 0)
-                    System.arraycopy(hashBytes, 0, bytes, offset, gap);
-            }
-
-        }
+    	// Mark/reset
+    	if (start < processed) {
+    		out("position: " + getPosition() + " start: " + start + " processed: " + processed);
+    		this.r = new Random(this.seed);
+    		processed = 0;
+    		byte buf[] = new byte[buf_size];
+    		while (processed < start) {
+               if ((processed+buf_size) <= start) {
+            	   r.nextBytes(buf);
+            	   processed += buf_size;
+            	   continue;
+               }
+               int l = (int) (start - processed);
+               buf = new byte[l];
+               processed += l;
+        	   r.nextBytes(buf);
+    		}
+    	}
+    	
+		byte buf[] = new byte[buf_size];
+		int o = offset;
+		while (processed < this.getPosition()) {
+           if ((processed+buf_size) <= this.getPosition()) {
+        	   r.nextBytes(buf);
+        	   System.arraycopy(buf, 0, bytes, o, buf_size);
+        	   processed += buf_size;
+        	   o += buf_size;
+        	   continue;
+           }
+           int l = (int) (this.getPosition() - processed);
+           buf = new byte[l];
+           processed += l;
+    	   r.nextBytes(buf);
+    	   System.arraycopy(buf, 0, bytes, o, l);
+		}
     }
 
+	public static void out(String s) {
+		System.out.println(s);
+	}
+    
 	public static void main(String[] args) {
-		byte buf[] = new byte[8192000];
+		byte buf[] = new byte[4096];
 		try{
 			// entity without data value
 			// entity with random input stream
+			long length = 1192010;
 			System.out.println("=== Test Entity with value stream from random generator ===");
-	        RandomInputStream fi = new RandomInputStream(8192000, new Random(23), true, false);
+	        RandomInputStream fi = new RandomInputStream(length, new Random(23), true, false);
 			FileOutputStream  fo = new FileOutputStream(new File("rnd.txt"));
-			fi.read(buf);
-			fo.write(buf);
+			fi.mark((int)length);
+			byte b[] = new byte[9];
+			fi.read(b);
+			out("First 9 bytes: " + Arrays.toString(b));
+			out("Mark");
+			fi.mark((int)length);
+			fi.read(b);
+			out("Next  9 bytes: " + Arrays.toString(b));
+
+			int len = 0;
+			while ((len = fi.read(buf)) > 0) {
+			   fo.write(buf, 0, len);
+			}
+			
+			out("Reset");
+			fi.reset();
+			
+			fi.read(b);
+			out("First 9 bytes: " + Arrays.toString(b));
+
 			fi.close();
 			fo.close();
 			
